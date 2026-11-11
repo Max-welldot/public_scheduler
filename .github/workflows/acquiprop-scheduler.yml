@@ -3,7 +3,7 @@ name: AcquiProp scheduled publishing
 on:
   schedule:
     # Run twice an hour, seven minutes after the hour and half past.
-    - cron: "7,37 * * * *"
+    - cron: "13,43 * * * *"
   workflow_dispatch:
 
 concurrency:
