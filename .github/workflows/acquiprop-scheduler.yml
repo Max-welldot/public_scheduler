@@ -1,0 +1,73 @@
+name: AcquiProp scheduled publishing
+
+on:
+  schedule:
+    # Run twice an hour, seven minutes after the hour and half past.
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: acquiprop-scheduled-publishing
+  cancel-in-progress: false
+
+permissions:
+  contents: none
+
+jobs:
+  call-acquiprop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions: {}
+    steps:
+      - name: Trigger the private AcquiProp scheduler endpoint
+        shell: bash
+        env:
+          ACQUIPROP_SCHEDULER_SECRET: ${{ secrets.ACQUIPROP_SCHEDULER_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${ACQUIPROP_SCHEDULER_SECRET:-}" ]]; then
+            echo "Missing Actions secret: ACQUIPROP_SCHEDULER_SECRET"
+            exit 1
+          fi
+
+          endpoint="https://acquiprop.com/campaigns/internal/automation/run/"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          for attempt in 1 2; do
+            : > "$response_file"
+            set +e
+            http_code="$(curl \
+              --silent \
+              --show-error \
+              --connect-timeout 20 \
+              --max-time 180 \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Authorization: Bearer ${ACQUIPROP_SCHEDULER_SECRET}" \
+              --header "Accept: application/json" \
+              --header "Content-Type: application/json" \
+              --data '{}' \
+              "$endpoint")"
+            curl_status=$?
+            set -e
+
+            if [[ "$curl_status" -eq 0 && "$http_code" == "200" ]]; then
+              cat "$response_file"
+              echo "AcquiProp scheduler request completed successfully."
+              exit 0
+            fi
+
+            echo "Scheduler request attempt ${attempt} did not succeed (HTTP ${http_code:-000}, curl ${curl_status})."
+            cat "$response_file"
+
+            if [[ "$attempt" -eq 2 ]]; then
+              echo "AcquiProp scheduler could not be reached after two attempts."
+              exit 1
+            fi
+
+            # Retry the wake-up/network path once. Do not print or expose the secret.
+            sleep 20
+          done
